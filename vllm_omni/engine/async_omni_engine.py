@@ -184,6 +184,70 @@ def _weak_shutdown_async_omni_engine(
             pass
 
 
+MEDIA_OUTPUT_TYPES = {"audio", "image", "images", "video", "videos"}
+
+
+def _stage_type(client, meta) -> str | None:
+    stage_type = getattr(meta, "stage_type", None)
+    if stage_type is not None:
+        return stage_type
+    return getattr(client, "stage_type", None)
+
+
+def _is_diffusion_media_stage(client, meta, final_output_type: str | None) -> bool:
+    return _stage_type(client, meta) == "diffusion" and final_output_type in MEDIA_OUTPUT_TYPES
+
+
+def _is_tts_audio_stage(client, meta, final_output_type: str | None) -> bool:
+    return _stage_type(client, meta) != "diffusion" and final_output_type == "audio"
+
+
+def _has_input_source(client, meta) -> bool:
+    return bool(getattr(meta, "engine_input_source", getattr(client, "engine_input_source", [])))
+
+
+def _derive_supported_tasks(stage_clients, stage_metadata) -> tuple[str, ...]:
+    """Derive the served task names from the stage pipeline.
+
+    Dedicated TTS pipelines advertise ``"speech"`` without ``"generate"`` so
+    raw-text completion/chat routes are not registered for talker-only models
+    such as CosyVoice3 (issue #4721). Non-TTS and unknown pipelines keep the
+    legacy ``"generate"`` default until tasks can be declared explicitly in
+    deploy config.
+    """
+    stages = list(zip(stage_clients, stage_metadata))
+    tasks: set[str] = set()
+    has_tts_audio_output = any(
+        _is_tts_audio_stage(client, meta, getattr(meta, "final_output_type", None)) for client, meta in stages
+    )
+    # Compatibility heuristic until deploy configs can declare supported_tasks explicitly.
+    # Dedicated TTS pipelines end in an audio decoder fed by an upstream talker. Omni
+    # pipelines have at least one non-audio final-output stage before the audio branch,
+    # even when that stage does not report final_output_type="text".
+    has_non_audio_final_output = any(
+        bool(getattr(meta, "final_output", getattr(client, "final_output", False)))
+        and getattr(meta, "final_output_type", None) != "audio"
+        for client, meta in stages
+    )
+    has_downstream_audio_decoder = any(
+        _is_tts_audio_stage(client, meta, getattr(meta, "final_output_type", None)) and _has_input_source(client, meta)
+        for client, meta in stages
+    )
+    is_tts_only_pipeline = has_tts_audio_output and has_downstream_audio_decoder and not has_non_audio_final_output
+
+    for client, meta in stages:
+        final_output_type = getattr(meta, "final_output_type", None)
+        if (
+            getattr(client, "is_comprehension", False) and final_output_type != "audio" and not is_tts_only_pipeline
+        ) or _is_diffusion_media_stage(client, meta, final_output_type):
+            tasks.add("generate")
+    if has_tts_audio_output:
+        tasks.add("speech")
+    if not tasks:
+        tasks.add("generate")
+    return tuple(sorted(tasks))
+
+
 class AsyncOmniEngine:
     """Thin proxy that launches an Orchestrator in a background thread.
 
@@ -390,12 +454,7 @@ class AsyncOmniEngine:
             )
             for client in self.stage_clients
         ]
-        supported_tasks: set[str] = set()
-        if any(getattr(client, "is_comprehension", False) for client in self.stage_clients):
-            supported_tasks.add("generate")
-        if any(meta.final_output_type == "audio" for meta in self.stage_metadata):
-            supported_tasks.add("speech")
-        self.supported_tasks = tuple(supported_tasks) if supported_tasks else ("generate",)
+        self.supported_tasks = _derive_supported_tasks(self.stage_clients, self.stage_metadata)
 
     def _bootstrap_orchestrator(
         self,

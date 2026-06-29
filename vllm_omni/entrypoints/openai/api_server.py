@@ -43,8 +43,10 @@ from vllm.entrypoints.openai.chat_completion.protocol import (
 # yapf conflicts with isort for this block
 # yapf: disable
 # yapf: enable
+from vllm.entrypoints.openai.completion.protocol import CompletionRequest
 from vllm.entrypoints.openai.completion.serving import OpenAIServingCompletion
 from vllm.entrypoints.openai.engine.protocol import (
+    ErrorInfo,
     ErrorResponse,
     ModelCard,
     ModelList,
@@ -380,6 +382,21 @@ def _create_speech_error_json_response(
     return _error_response_to_json_response(err, status_code=status_code)
 
 
+def _create_unsupported_api_json_response(
+    raw_request: Request,
+    api_name: str,
+) -> JSONResponse:
+    err = ErrorResponse(
+        error=ErrorInfo(
+            message=f"The model does not support {api_name}",
+            type="NotFoundError",
+            param=None,
+            code=HTTPStatus.NOT_FOUND.value,
+        )
+    )
+    return _error_response_to_json_response(err, status_code=HTTPStatus.NOT_FOUND)
+
+
 class _DiffusionServingModels:
     """Minimal OpenAIServingModels implementation for diffusion-only servers.
 
@@ -497,7 +514,9 @@ async def omni_run_server_worker(listen_address, sock, args, client_config=None,
         # OMNI: Pass supported_tasks to build_app (required by upstream vLLM)
         app = build_openai_app(args, supported_tasks)
 
-        # OMNI: Remove upstream routes that we override with omni-specific handlers
+        # OMNI: Override completion/chat routes so speech-only models return
+        # 4xx before unsupported generate requests can dispatch to the engine.
+        _remove_route_from_app(app, "/v1/completions", {"POST"})
         _remove_route_from_app(app, "/v1/chat/completions", {"POST"})
         _remove_route_from_app(app, "/v1/models", {"GET"})  # Remove upstream /v1/models to use omni's handler
         app.include_router(router)
@@ -1147,12 +1166,53 @@ def Omnichat(request: Request) -> OmniOpenAIServingChat | None:
     return request.app.state.openai_serving_chat
 
 
+def Omnicompletion(request: Request) -> OpenAIServingCompletion | None:
+    return request.app.state.openai_serving_completion
+
+
 def Omnispeech(request: Request) -> OmniOpenAIServingSpeech | None:
     return request.app.state.openai_serving_speech
 
 
 def OmniAudioGenerate(request: Request) -> OmniOpenAIServingAudioGenerate | None:
     return getattr(request.app.state, "openai_serving_audio_generate", None)
+
+
+@router.post(
+    "/v1/completions",
+    dependencies=[Depends(validate_json_request)],
+    responses={
+        HTTPStatus.OK.value: {"content": {"text/event-stream": {}}},
+        HTTPStatus.BAD_REQUEST.value: {"model": ErrorResponse},
+        HTTPStatus.NOT_FOUND.value: {"model": ErrorResponse},
+        HTTPStatus.INTERNAL_SERVER_ERROR.value: {"model": ErrorResponse},
+    },
+)
+@with_cancellation
+@load_aware_call
+async def create_completion(request: CompletionRequest, raw_request: Request):
+    handler: Any | None = Omnicompletion(raw_request)
+    if handler is None:
+        return _create_unsupported_api_json_response(raw_request, "Completions API")
+    try:
+        generator = await handler.create_completion(request, raw_request)
+    except (EngineGenerateError, EngineDeadError) as exc:
+        return _create_engine_error_json_response(raw_request, exc)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Completion failed: %s", e)
+        raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value, detail=str(e)) from e
+
+    if isinstance(generator, ErrorResponse):
+        return _error_response_to_json_response(generator)
+    if isinstance(generator, Response):
+        return generator
+    if getattr(request, "stream", False):
+        return StreamingResponse(content=generator, media_type="text/event-stream")
+    if hasattr(generator, "model_dump"):
+        return JSONResponse(content=generator.model_dump(mode="json", warnings="none"))
+    return JSONResponse(content=generator)
 
 
 @router.post(
@@ -1171,13 +1231,7 @@ async def create_chat_completion(request: ChatCompletionRequest, raw_request: Re
     metrics_header_format = raw_request.headers.get(ENDPOINT_LOAD_METRICS_FORMAT_HEADER_LABEL, "")
     handler = Omnichat(raw_request)
     if handler is None:
-        base_server = getattr(raw_request.app.state, "openai_serving_tokenization", None)
-        if base_server is None:
-            raise HTTPException(
-                status_code=HTTPStatus.NOT_FOUND.value,
-                detail="The model does not support Chat Completions API",
-            )
-        return base_server.create_error_response(message="The model does not support Chat Completions API")
+        return _create_unsupported_api_json_response(raw_request, "Chat Completions API")
     try:
         generator = await handler.create_chat_completion(request, raw_request)
     except (EngineGenerateError, EngineDeadError) as exc:

@@ -87,17 +87,20 @@ def _is_prefill_step() -> bool:
     """
     if not is_forward_context_available():
         return True
-    attn_metadata = get_forward_context().attn_metadata
-    if not attn_metadata:
-        return True
     try:
-        attn = next(iter(attn_metadata.values()))
-    except (StopIteration, AttributeError):
+        attn_metadata = get_forward_context().attn_metadata
+        if not attn_metadata:
+            return True
+        if isinstance(attn_metadata, dict):
+            attn = next(iter(attn_metadata.values()))
+        else:
+            attn = attn_metadata
+        max_query_len = getattr(attn, "max_query_len", None)
+        if max_query_len is None:
+            return True
+        return int(max_query_len) > 1
+    except Exception:
         return True
-    max_query_len = getattr(attn, "max_query_len", None)
-    if max_query_len is None:
-        return True
-    return int(max_query_len) > 1
 
 
 # Process-wide cache of per-model mm-processor runtime components (tokenizer,
