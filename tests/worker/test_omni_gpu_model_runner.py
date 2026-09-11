@@ -16,6 +16,153 @@ from vllm_omni.worker.omni_connector_model_runner_mixin import OmniConnectorMode
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
 
+@pytest.mark.parametrize(
+    ("prompt_lens", "computed", "scheduled", "expected"),
+    [
+        ([1], [0], [1], [True]),  # single-token prefill
+        ([4, 8], [4, 2], [1, 3], [False, True, True, True]),  # mixed decode/prefill
+        ([5], [4], [2], [True, False]),  # prompt remainder then decode
+    ],
+)
+def test_build_prefill_token_mask_tracks_request_ranges(prompt_lens, computed, scheduled, expected):
+    mask = _build_prefill_token_mask(prompt_lens, computed, scheduled, torch.device("cpu"))
+    actual = [bool(mask)] * sum(scheduled) if isinstance(mask, bool) else mask.tolist()
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    ("req_ids", "prompt_lens", "computed", "scheduled", "flat_ids", "expected_mask"),
+    [
+        pytest.param(
+            ["decode", "prefill"],
+            [8, 5],
+            [8, 0],
+            [1, 5],
+            [90, 100, 101, 102, 103, 104],
+            [False, True, True, True, True, True],
+            id="decode-before-prefill",
+        ),
+        pytest.param(
+            ["short", "long", "decode"],
+            [2, 6, 6],
+            [0, 1, 6],
+            [2, 3, 1],
+            [10, 11, 20, 21, 22, 30],
+            [True, True, True, True, True, False],
+            id="different-prefill-lengths",
+        ),
+        pytest.param(
+            ["remainder"],
+            [5],
+            [4],
+            [2],
+            [40, 41],
+            [True, False],
+            id="prompt-remainder-then-decode",
+        ),
+    ],
+)
+def test_runner_prefill_mask_matches_flattened_input_order(
+    req_ids, prompt_lens, computed, scheduled, flat_ids, expected_mask
+):
+    """The runner's request metadata must align with its flat GPU token buffer."""
+
+    class CaptureModel:
+        def embed_input_ids(self, input_ids, **kwargs):
+            self.input_ids = input_ids.detach().clone()
+            self.kwargs = kwargs
+            return input_ids.to(dtype=torch.float32).unsqueeze(-1)
+
+    runner = object.__new__(OmniGPUModelRunner)
+    runner.input_ids = SimpleNamespace(gpu=torch.tensor(flat_ids, dtype=torch.long))
+    runner.input_batch = SimpleNamespace(
+        req_ids=req_ids,
+        num_prompt_tokens=prompt_lens,
+        num_computed_tokens_cpu=computed,
+    )
+    runner.model = CaptureModel()
+    scheduler_output = SimpleNamespace(num_scheduled_tokens=dict(zip(req_ids, scheduled, strict=True)))
+
+    result = OmniGPUModelRunner._embed_scheduled_input_ids_with_prefill_mask(
+        runner,
+        scheduler_output,
+        len(flat_ids),
+        multimodal_embeddings=[],
+        is_multimodal=torch.zeros(len(flat_ids), dtype=torch.bool),
+    )
+
+    assert result.shape == (len(flat_ids), 1)
+    assert runner.model.input_ids.tolist() == flat_ids
+    mask = runner.model.kwargs["prefill_token_mask"]
+    actual_mask = [bool(mask)] * len(flat_ids) if isinstance(mask, bool) else mask.tolist()
+    assert actual_mask == expected_mask
+
+
+def test_runner_skips_prefill_mask_for_multimodal_step(monkeypatch: pytest.MonkeyPatch):
+    """Multimodal steps must not allocate a mask that CosyVoice3 ignores."""
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("prefill mask should not be built for multimodal steps")
+
+    monkeypatch.setattr("vllm_omni.worker.gpu_model_runner._build_prefill_token_mask", fail_if_called)
+
+    class CaptureModel:
+        def embed_input_ids(self, input_ids, **kwargs):
+            self.kwargs = kwargs
+            return input_ids.to(dtype=torch.float32).unsqueeze(-1)
+
+    runner = object.__new__(OmniGPUModelRunner)
+    runner.input_ids = SimpleNamespace(gpu=torch.tensor([10, 11], dtype=torch.long))
+    runner.input_batch = SimpleNamespace(
+        req_ids=["audio"],
+        num_prompt_tokens=[2],
+        num_computed_tokens_cpu=[0],
+    )
+    runner.model = CaptureModel()
+    scheduler_output = SimpleNamespace(num_scheduled_tokens={"audio": 2})
+
+    result = OmniGPUModelRunner._embed_scheduled_input_ids_with_prefill_mask(
+        runner,
+        scheduler_output,
+        2,
+        multimodal_embeddings=[],
+        is_multimodal=torch.tensor([True, True]),
+    )
+
+    assert result.shape == (2, 1)
+    assert runner.model.kwargs["prefill_token_mask"] is False
+
+
+def test_runner_keeps_prefill_mask_for_mixed_text_and_multimodal_step():
+    """Mixed batches must retain the mask for text-only request segments."""
+
+    class CaptureModel:
+        def embed_input_ids(self, input_ids, **kwargs):
+            self.kwargs = kwargs
+            return input_ids.to(dtype=torch.float32).unsqueeze(-1)
+
+    runner = object.__new__(OmniGPUModelRunner)
+    runner.input_ids = SimpleNamespace(gpu=torch.tensor([6562, 0, 0, 0], dtype=torch.long))
+    runner.input_batch = SimpleNamespace(
+        req_ids=["text", "audio"],
+        num_prompt_tokens=[1, 3],
+        num_computed_tokens_cpu=[0, 0],
+    )
+    runner.model = CaptureModel()
+    scheduler_output = SimpleNamespace(num_scheduled_tokens={"text": 1, "audio": 3})
+
+    result = OmniGPUModelRunner._embed_scheduled_input_ids_with_prefill_mask(
+        runner,
+        scheduler_output,
+        4,
+        multimodal_embeddings=[torch.zeros(1, 1)],
+        is_multimodal=torch.tensor([False, True, True, True]),
+    )
+
+    assert result.shape == (4, 1)
+    assert runner.model.kwargs["prefill_token_mask"] is True
+
+
 def _runner_for_talker_graph_init(
     *,
     talker_mtp_graph_safe: bool | None,

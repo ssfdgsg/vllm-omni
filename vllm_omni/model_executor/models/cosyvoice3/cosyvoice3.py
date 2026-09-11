@@ -789,6 +789,7 @@ class CosyVoice3Model(
         multimodal_embeddings=None,
         is_multimodal=None,
         prefill_token_mask: bool | torch.Tensor | None = None,
+        scheduled_token_counts: list[int] | None = None,
     ) -> torch.Tensor:
         if self.model_stage == "cosyvoice3_talker":
             if is_multimodal is not None and any(is_multimodal):
@@ -819,6 +820,35 @@ class CosyVoice3Model(
                 # placeholder, NOT at its first audio placeholder.
                 prev_false = torch.cat([torch.ones(1, dtype=torch.bool, device=is_mm.device), ~is_mm[:-1]])
                 group_starts = (is_mm & prev_false).nonzero(as_tuple=True)[0].tolist()
+
+                # Mixed batches can contain multimodal and text-only prefills.
+                # Validate only text-only request segments and only their
+                # prefill positions; codec decode tokens are not untrusted text.
+                if prefill_token_mask is not False and scheduled_token_counts is not None:
+                    if any(count < 0 for count in scheduled_token_counts) or sum(scheduled_token_counts) != len(input_ids):
+                        raise ValueError(
+                            "cosyvoice3 talker: scheduled_token_counts must be non-negative "
+                            "and sum to the input_ids length."
+                        )
+                    mask = prefill_token_mask
+                    if isinstance(mask, torch.Tensor):
+                        if mask.shape != input_ids.shape:
+                            raise ValueError(
+                                "cosyvoice3 talker: prefill_token_mask must match input_ids shape; "
+                                f"got {mask.shape} and {input_ids.shape}."
+                            )
+                        mask = mask.to(device=input_ids.device, dtype=torch.bool)
+                    start = 0
+                    num_speech_tokens = self.model.speech_embedding.weight.shape[0]
+                    for count in scheduled_token_counts:
+                        end = start + count
+                        request_is_multimodal = any(start <= group < end for group in group_starts)
+                        if not request_is_multimodal:
+                            request_ids = input_ids[start:end]
+                            if isinstance(mask, torch.Tensor):
+                                request_ids = request_ids[mask[start:end]]
+                            _validate_speech_token_ids(request_ids, num_speech_tokens)
+                        start = end
                 if len(group_starts) != len(multimodal_embeddings):
                     raise RuntimeError(
                         f"cosyvoice3 talker: found {len(group_starts)} placeholder "

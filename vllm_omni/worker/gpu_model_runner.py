@@ -1592,17 +1592,30 @@ class OmniGPUModelRunner(GPUModelRunner):
         req_ids = self.input_batch.req_ids
         num_reqs = len(req_ids)
         scheduled_tokens = [int(scheduler_output.num_scheduled_tokens[req_id]) for req_id in req_ids]
-        prefill_token_mask = _build_prefill_token_mask(
-            self.input_batch.num_prompt_tokens[:num_reqs],
-            self.input_batch.num_computed_tokens_cpu[:num_reqs],
-            scheduled_tokens,
-            input_ids.device,
+        # A fully multimodal batch is handled by the placeholder rearrangement
+        # below and does not need a token-level mask. Use request metadata rather
+        # than ``is_multimodal``: a multimodal request in a decode-only window has
+        # no current placeholder tokens. ``mm_features`` is CPU-side metadata, so
+        # this check adds no CUDA synchronization to the decode path. Mixed
+        # text/multimodal batches retain the mask for text-only request segments.
+        all_requests_multimodal = bool(req_ids) and all(
+            bool(self.requests[req_id].mm_features) for req_id in req_ids
         )
+        if all_requests_multimodal:
+            prefill_token_mask = False
+        else:
+            prefill_token_mask = _build_prefill_token_mask(
+                self.input_batch.num_prompt_tokens[:num_reqs],
+                self.input_batch.num_computed_tokens_cpu[:num_reqs],
+                scheduled_tokens,
+                input_ids.device,
+            )
         return self.model.embed_input_ids(
             input_ids,
             multimodal_embeddings=multimodal_embeddings,
             is_multimodal=is_multimodal,
             prefill_token_mask=prefill_token_mask,
+            scheduled_token_counts=scheduled_tokens,
         )
 
     def _preprocess(

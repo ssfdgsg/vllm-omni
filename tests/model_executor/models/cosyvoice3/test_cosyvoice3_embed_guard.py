@@ -99,6 +99,52 @@ def test_multimodal_prefill_skips_non_multimodal_validation(mocker: MockerFixtur
     guard.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("input_ids", "is_multimodal", "scheduled_token_counts"),
+    [
+        pytest.param(
+            [6562, 0, 1, 2, 3],
+            [False, True, True, True, False],
+            [1, 4],
+            id="text-before-audio",
+        ),
+        pytest.param(
+            [0, 1, 2, 3, 6562],
+            [True, True, True, False, False],
+            [4, 1],
+            id="text-after-audio",
+        ),
+    ],
+)
+def test_mixed_prefill_validates_text_only_request(
+    input_ids: list[int],
+    is_multimodal: list[bool],
+    scheduled_token_counts: list[int],
+) -> None:
+    from vllm_omni.model_executor.models.cosyvoice3.cosyvoice3 import CosyVoice3Model
+
+    hidden_size = 4
+    model = SimpleNamespace(
+        model_stage="cosyvoice3_talker",
+        model=SimpleNamespace(
+            llm=SimpleNamespace(model=SimpleNamespace(embed_tokens=torch.nn.Embedding(7000, hidden_size))),
+            speech_embedding=torch.nn.Embedding(10, hidden_size),
+            sos=8,
+            task_id=9,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="6562"):
+        CosyVoice3Model.embed_input_ids(
+            model,
+            torch.tensor(input_ids),
+            multimodal_embeddings=[torch.zeros(1, hidden_size)],
+            is_multimodal=torch.tensor(is_multimodal),
+            prefill_token_mask=True,
+            scheduled_token_counts=scheduled_token_counts,
+        )
+
+
 def test_missing_prefill_metadata_fails_safe() -> None:
     with pytest.raises(ValueError, match="out of range"):
         _embed_input_ids(torch.tensor([6562]), prefill_token_mask=None)
