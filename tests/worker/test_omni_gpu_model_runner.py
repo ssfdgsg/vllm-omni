@@ -80,6 +80,7 @@ def test_runner_prefill_mask_matches_flattened_input_order(
         num_prompt_tokens=prompt_lens,
         num_computed_tokens_cpu=computed,
     )
+    runner.requests = {req_id: SimpleNamespace(mm_features=[]) for req_id in req_ids}
     runner.model = CaptureModel()
     scheduler_output = SimpleNamespace(num_scheduled_tokens=dict(zip(req_ids, scheduled, strict=True)))
 
@@ -118,6 +119,7 @@ def test_runner_skips_prefill_mask_for_multimodal_step(monkeypatch: pytest.Monke
         num_prompt_tokens=[2],
         num_computed_tokens_cpu=[0],
     )
+    runner.requests = {"audio": SimpleNamespace(mm_features=[object()])}
     runner.model = CaptureModel()
     scheduler_output = SimpleNamespace(num_scheduled_tokens={"audio": 2})
 
@@ -148,6 +150,10 @@ def test_runner_keeps_prefill_mask_for_mixed_text_and_multimodal_step():
         num_prompt_tokens=[1, 3],
         num_computed_tokens_cpu=[0, 0],
     )
+    runner.requests = {
+        "text": SimpleNamespace(mm_features=[]),
+        "audio": SimpleNamespace(mm_features=[object()]),
+    }
     runner.model = CaptureModel()
     scheduler_output = SimpleNamespace(num_scheduled_tokens={"text": 1, "audio": 3})
 

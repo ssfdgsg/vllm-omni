@@ -825,7 +825,10 @@ class CosyVoice3Model(
                 # Validate only text-only request segments and only their
                 # prefill positions; codec decode tokens are not untrusted text.
                 if prefill_token_mask is not False and scheduled_token_counts is not None:
-                    if any(count < 0 for count in scheduled_token_counts) or sum(scheduled_token_counts) != len(input_ids):
+                    counts_valid = all(count >= 0 for count in scheduled_token_counts) and (
+                        sum(scheduled_token_counts) == len(input_ids)
+                    )
+                    if not counts_valid:
                         raise ValueError(
                             "cosyvoice3 talker: scheduled_token_counts must be non-negative "
                             "and sum to the input_ids length."
