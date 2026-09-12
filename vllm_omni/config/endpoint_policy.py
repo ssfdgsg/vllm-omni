@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Endpoint restriction policy for omni pipelines."""
 
 from dataclasses import dataclass
@@ -8,8 +8,9 @@ from typing import NamedTuple
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from starlette.routing import Route
-from vllm.entrypoints.serve.utils.error_response import create_error_response
+from vllm.entrypoints.serve.exception_handling.error_response import create_error_response
+
+from vllm_omni.entrypoints.serve.utils.routes import remove_route_from_app
 
 
 class RouteTarget(NamedTuple):
@@ -51,22 +52,6 @@ def build_rejection_handler(reason: str):
         )
 
     return rejection_handler
-
-
-def remove_route_from_app(
-    app: FastAPI,
-    path: str,
-    methods: set[str] | frozenset[str] | None = None,
-) -> None:
-    """Remove matching routes from an initialized FastAPI application."""
-    routes_to_remove: list[Route] = []
-    for route in app.router.routes:
-        if isinstance(route, Route) and route.path == path:
-            if methods is None or (route.methods and route.methods & methods):
-                routes_to_remove.append(route)
-
-    for route in routes_to_remove:
-        app.router.routes.remove(route)
 
 
 def shutdown_unsupported_routes(
