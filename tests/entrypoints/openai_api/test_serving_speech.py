@@ -369,7 +369,7 @@ async def test_server_worker_applies_speech_only_endpoint_restrictions(mocker: M
 
     class FakeEngine:
         endpoint_restrictions = COSYVOICE3_PIPELINE.endpoint_restrictions
-        stage_configs = []
+        stage_configs: list[object] = []
 
         def __init__(self):
             self.generate = mocker.AsyncMock()

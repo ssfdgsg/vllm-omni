@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Regression tests for the CosyVoice3 talker speech-embedding OOB guard.
 
 See https://github.com/vllm-project/vllm-omni/issues/4721 — a non-multimodal request

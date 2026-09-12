@@ -910,11 +910,11 @@ class CosyVoice3Model(
                 segments: list[torch.Tensor] = []
                 first_prefill = group_starts[0]
                 if first_prefill > 0:
-                    # These decode tokens are codec ids the talker generated itself
-                    # (sampled from its own in-range vocab), so they are in range by
-                    # construction and need no bounds check here. The OOB guard below
-                    # is only for the non-multimodal else branch, which is the path that
-                    # can receive untrusted text ids.
+                    # The existing multimodal layout treats the prefix before the
+                    # first placeholder as talker codec/decode tokens. Text-only
+                    # request segments are validated above; complete semantic
+                    # handling of text prefixes inside a multimodal request remains
+                    # outside this narrowly scoped out-of-range guard.
                     decode_ids = input_ids[:first_prefill].to(dtype=torch.long)
                     segments.append(self.model.speech_embedding.weight[decode_ids])
 
