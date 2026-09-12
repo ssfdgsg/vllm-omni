@@ -141,6 +141,37 @@ def test_runner_skips_prefill_mask_for_multimodal_step(monkeypatch: pytest.Monke
     assert runner.model.kwargs["prefill_token_mask"] is False
 
 
+def test_runner_keeps_prefill_mask_for_multimodal_prompt_continuation():
+    """A multimodal request can have text-only prompt tokens in a later window."""
+
+    class CaptureModel:
+        def embed_input_ids(self, input_ids, **kwargs):
+            self.kwargs = kwargs
+            return input_ids.to(dtype=torch.float32).unsqueeze(-1)
+
+    runner = object.__new__(OmniGPUModelRunner)
+    runner.input_ids = SimpleNamespace(gpu=torch.tensor([6562, 6563], dtype=torch.long))
+    runner.input_batch = SimpleNamespace(
+        req_ids=["audio"],
+        num_prompt_tokens=[4],
+        num_computed_tokens_cpu=[2],
+    )
+    runner.requests = {"audio": SimpleNamespace(mm_features=[object()])}
+    runner.model = CaptureModel()
+    scheduler_output = SimpleNamespace(num_scheduled_tokens={"audio": 2})
+
+    result = OmniGPUModelRunner._embed_scheduled_input_ids_with_prefill_mask(
+        runner,
+        scheduler_output,
+        2,
+        multimodal_embeddings=[],
+        is_multimodal=torch.tensor([False, False]),
+    )
+
+    assert result.shape == (2, 1)
+    assert runner.model.kwargs["prefill_token_mask"] is True
+
+
 def test_runner_keeps_prefill_mask_for_mixed_text_and_multimodal_step():
     """Mixed batches must retain the mask for text-only request segments."""
 
@@ -325,7 +356,7 @@ class PrefillMaskSchedulerOutput:
 class DummyScheduledRequest:
     def __init__(self, num_tokens: int):
         self.num_tokens = num_tokens
-        self.mm_features = []
+        self.mm_features: list[object] = []
 
 
 class DummyInputBatch:
