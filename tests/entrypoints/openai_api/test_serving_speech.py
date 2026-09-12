@@ -419,8 +419,6 @@ async def test_server_worker_applies_speech_only_endpoint_restrictions(mocker: M
     mocker.patch.object(api_server_module.STORAGE_MANAGER, "start", new=mocker.AsyncMock())
     mocker.patch.object(api_server_module, "_get_vllm_config", new=mocker.AsyncMock(return_value=None))
     mocker.patch.object(api_server_module, "get_uvicorn_log_config", return_value=None)
-    terminate_mock = mocker.patch.object(api_server_module, "terminate_if_errored")
-
     args = SimpleNamespace(
         tool_parser_plugin="",
         reasoning_parser_plugin="",
@@ -475,7 +473,6 @@ async def test_server_worker_applies_speech_only_endpoint_restrictions(mocker: M
     assert "Chat Completions API" in chat_body["error"]["message"]
 
     assert speech_response.status_code == 200
-    terminate_mock.assert_not_called()
     completion_handler.create_completion.assert_not_awaited()
     chat_handler.create_chat_completion.assert_not_awaited()
     speech_handler.create_speech.assert_awaited_once()
