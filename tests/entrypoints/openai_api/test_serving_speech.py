@@ -417,7 +417,7 @@ async def test_server_worker_applies_speech_only_endpoint_restrictions(mocker: M
     mocker.patch.object(api_server_module, "omni_init_app_state", fake_init_app_state)
     mocker.patch.object(api_server_module, "serve_http", fake_serve_http)
     mocker.patch.object(api_server_module.STORAGE_MANAGER, "start", new=mocker.AsyncMock())
-    mocker.patch.object(api_server_module, "_get_vllm_config", new=mocker.AsyncMock(return_value=None))
+    mocker.patch.object(api_server_module.openai_app_state, "_get_vllm_config", new=mocker.AsyncMock(return_value=None))
     mocker.patch.object(api_server_module, "get_uvicorn_log_config", return_value=None)
     args = SimpleNamespace(
         tool_parser_plugin="",

@@ -325,6 +325,7 @@ class PrefillMaskSchedulerOutput:
 class DummyScheduledRequest:
     def __init__(self, num_tokens: int):
         self.num_tokens = num_tokens
+        self.mm_features = []
 
 
 class DummyInputBatch:
