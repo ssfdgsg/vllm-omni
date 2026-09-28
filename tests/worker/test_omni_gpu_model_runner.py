@@ -207,6 +207,8 @@ def test_runner_keeps_prefill_mask_for_mixed_text_and_multimodal_step():
 
     assert result.shape == (4, 1)
     assert runner.model.kwargs["prefill_token_mask"] is True
+
+
 def test_model_forward_preserves_omni_payload_after_graph_weak_ref(monkeypatch):
     hidden = torch.arange(8, dtype=torch.float32).reshape(2, 4)
     payload = {
