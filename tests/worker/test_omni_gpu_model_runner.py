@@ -654,6 +654,8 @@ def _make_runner(req_ids=("r1", "r2"), hidden_size=4):
     runner.input_batch = DummyInputBatch(list(req_ids))
     runner.requests = {rid: DummyReqState() for rid in req_ids}
     runner.model_intermediate_buffer = {}
+    # Mirrors OmniGPUModelRunner.__init__; this stub bypasses initialization.
+    runner._supports_prefill_token_mask = False
 
     # query_start_loc.cpu[req_index] is used to locate the token position
     # in the flattened `inputs_embeds`.
