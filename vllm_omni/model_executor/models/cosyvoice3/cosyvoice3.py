@@ -756,6 +756,7 @@ class CosyVoice3Model(
     supports_multimodal = True
     requires_raw_input_tokens = True
     supports_embed_input_ids_query_start_loc = True
+    supports_prefill_token_mask = True
     prefer_model_sampler = True
     _sampling_eps = 1e-5
 
