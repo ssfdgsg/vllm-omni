@@ -25,6 +25,11 @@ class OmniServingCapability(Enum):
 
     COMPLETIONS = RouteTarget("/v1/completions", frozenset({"POST"}))
     CHAT_COMPLETIONS = RouteTarget("/v1/chat/completions", frozenset({"POST"}))
+    CHAT_COMPLETIONS_BATCH = RouteTarget("/v1/chat/completions/batch", frozenset({"POST"}))
+    RESPONSES = RouteTarget("/v1/responses", frozenset({"POST"}))
+    MESSAGES = RouteTarget("/v1/messages", frozenset({"POST"}))
+    INVOCATIONS = RouteTarget("/invocations", frozenset({"POST"}))
+    GENERATE_TOKENS = RouteTarget("/inference/v1/generate", frozenset({"POST"}))
     IMAGE_EDITS = RouteTarget("/v1/images/edits", frozenset({"POST"}))
 
     @property

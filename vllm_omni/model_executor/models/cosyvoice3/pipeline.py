@@ -43,6 +43,26 @@ COSYVOICE3_PIPELINE = PipelineConfig(
             OmniServingCapability.CHAT_COMPLETIONS,
             "CosyVoice3 does not support the Chat Completions API.",
         ),
+        EndpointRestriction(
+            OmniServingCapability.CHAT_COMPLETIONS_BATCH,
+            "CosyVoice3 does not support the Batch Chat Completions API.",
+        ),
+        EndpointRestriction(
+            OmniServingCapability.RESPONSES,
+            "CosyVoice3 does not support the Responses API.",
+        ),
+        EndpointRestriction(
+            OmniServingCapability.MESSAGES,
+            "CosyVoice3 does not support the Messages API.",
+        ),
+        EndpointRestriction(
+            OmniServingCapability.INVOCATIONS,
+            "CosyVoice3 does not support the Invocations API.",
+        ),
+        EndpointRestriction(
+            OmniServingCapability.GENERATE_TOKENS,
+            "CosyVoice3 does not support the Generate Tokens API.",
+        ),
     ),
     stages=(
         StagePipelineConfig(
