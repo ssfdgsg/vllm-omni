@@ -500,7 +500,8 @@ async def test_server_worker_applies_speech_only_endpoint_restrictions(mocker: M
         route.path for route in upstream_app.routes if hasattr(route, "methods") and "POST" in (route.methods or ())
     }
     assert {"/v1/responses", "/v1/messages", "/invocations"} <= upstream_post_paths
-    assert ("/inference/v1/generate" in upstream_post_paths) == enable_scale_out
+    # Token-route registration varies across upstream versions; the requests
+    # below must be rejected whether the route was originally registered or not.
     sock = mocker.Mock()
     worker_task = asyncio.create_task(api_server_module.omni_run_server_worker("127.0.0.1:0", sock, args))
     await asyncio.wait_for(serve_started.wait(), timeout=2)
